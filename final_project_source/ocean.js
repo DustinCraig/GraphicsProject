@@ -2,8 +2,6 @@
 const REFLECTION_WIDTH = 512
 const REFLECTION_HEIGHT = 512
 
-const REFRACTION_WIDTH = 128
-const REFRACTION_HEIGHT = 128
 
 function is_power_of_two(value) {
     return (value & (value - 1)) == 0
@@ -18,20 +16,13 @@ export class OceanFrameBuffers {
         this.saved_height = this.gl.canvas.height 
         this.reflection_width = REFLECTION_WIDTH
         this.reflection_height = REFLECTION_HEIGHT
-        this.refraction_width = REFRACTION_WIDTH
-        this.refraction_height = REFRACTION_HEIGHT
 
         this.initialize_reflection_framebuffer()
-        this.initialize_refraction_framebuffer()
         this.ocean_dudv_texture = this.create_dudv(this.reflection_width, this.reflection_height)
     }
 
     bind_reflection_framebuffer() {
         this.bind_framebuffer(this.reflection_framebuffer, this.reflection_width, this.reflection_height)
-    }
-
-    bind_refraction_framebuffer() {
-        this.bind_framebuffer(this.refraction_framebuffer, this.refraction_width, this.refraction_height)
     }
 
     initialize_reflection_framebuffer() {
@@ -41,12 +32,6 @@ export class OceanFrameBuffers {
         this.unbind_current_framebuffer()
     }
 
-    initialize_refraction_framebuffer() {
-        this.refraction_framebuffer = this.create_framebuffer()
-        this.refraction_texture = this.create_texture_attachment(this.refraction_width, this.refraction_height)
-        this.refraction_depth_texture = this.create_depth_texture_attachment(this.refraction_width, this.refraction_height)
-        this.unbind_current_framebuffer()
-    }
 
     create_framebuffer() {
         const fb = this.gl.createFramebuffer()
@@ -106,11 +91,6 @@ export class OceanFrameBuffers {
                 }
         }
         image.src = 'http://web.eecs.utk.edu/~dcraig14/2bN9gJ0sx3U/final_project_source/waterdudv.jpg'
-       // this.gl.texImage2D(this.gl.TEXTURE_2D, level, internal_format,
-       //     internal_format, this.gl.UNSIGNED_BYTE, img)
-
-      //  this.gl.texParameteri(this.gl.TEXTURE_2D, this.gl.TEXTURE_MAG_FILTER, this.gl.LINEAR)
-       // this.gl.texParameteri(this.gl.TEXTURE_2D, this.gl.TEXTURE_MIN_FILTER, this.gl.LINEAR)
         return texture 
     }
 

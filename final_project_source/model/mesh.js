@@ -19,7 +19,6 @@ export class Mesh {
 
         /* Handle vertices */
         if(vertices !== null && name != 'skybox') {
-
             this.vertex_buffer = this.gl.createBuffer()
             this.vertex_count = vertices.length / 3
             this.gl.bindBuffer(this.gl.ARRAY_BUFFER,this.vertex_buffer)
@@ -46,12 +45,24 @@ export class Mesh {
         }
 
         // /* Handle UVs */
-        if(uv !== null) {
+        if(name === 'dirt') {
+            const texture_coordinates = [
+                0, 1, 1, 1, 1, 0, 1, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 1, 1, 1, 1, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 1, 1, 1, 0, 0, 1, 1, 1, 1, 1, 0, 0, 1, 0, 1, 1, 1, 1, 0, 1, 1
+            ]
             this.uv_buffer = this.gl.createBuffer()
-            this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.uv_buffer)
-            this.gl.bufferData(this.gl.ARRAY_BUFFER, new Float32Array(uv), this.gl.STATIC_DRAW)
-            this.gl.enableVertexAttribArray(2)
-            this.gl.vertexAttribPointer(2, 2, this.gl.FLOAT, false, 0, 0)
+                this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.uv_buffer)
+                this.gl.bufferData(this.gl.ARRAY_BUFFER, new Float32Array(texture_coordinates), this.gl.STATIC_DRAW)
+                this.gl.enableVertexAttribArray(2)
+                this.gl.vertexAttribPointer(2, 2, this.gl.FLOAT, false, 0, 0)
+        }  
+        else {
+            if(uv !== null) {
+                this.uv_buffer = this.gl.createBuffer()
+                this.gl.bindBuffer(this.gl.ARRAY_BUFFER, this.uv_buffer)
+                this.gl.bufferData(this.gl.ARRAY_BUFFER, new Float32Array(uv), this.gl.STATIC_DRAW)
+                this.gl.enableVertexAttribArray(2)
+                this.gl.vertexAttribPointer(2, 2, this.gl.FLOAT, false, 0, 0)
+            }
         }
 
         /* Handle mesh indices */

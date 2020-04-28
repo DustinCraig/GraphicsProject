@@ -17,8 +17,8 @@ const SKYBOX_TEXTURE = 1
 const NORMAL_MAP = 2
 
 /* Light Colors */
-const AMBIENT_COLOR = [0.5, 0.5, 0.5, 1.0]
-const DIFFUSE_COLOR = [0.6, 0.6, 0.7, 1.0]
+const AMBIENT_COLOR = [0.3, 0.3, 0.3, 1.0]
+const DIFFUSE_COLOR = [224/255, 157/255, 55/255, 1.0]
 const SPECULAR_COLOR = [1.0, 1.0, 1.0, 1.0]
 
 import {Logger, LOG_LEVEL, WARN_LEVEL, ERR_LEVEL} from './logger.js'
@@ -117,12 +117,20 @@ export class Shader {
     deactivate() { this.gl.useProgram(null) }
 
     set_perspective_matrix(m) {this.gl.uniformMatrix4fv(this.uniform_location.perspective_matrix, false, new Float32Array(m)) }
-    set_modelview_matrix(m) { this.gl.uniformMatrix4fv(this.uniform_location.modelview_matrix, false, new Float32Array(m)) }
+    set_modelview_matrix(m) {
+        this.gl.uniformMatrix4fv(this.uniform_location.modelview_matrix, false, new Float32Array(m)) 
+        const uniform = this.gl.getUniformLocation(this.program, 'uMVITMatrix')
+        if(uniform != -1) {
+            const vm = mat3.create()
+            mat3.normalFromMat4(vm, m)
+            this.gl.uniformMatrix3fv(uniform, false, new Float32Array(vm))
+        }
+    }
     set_camera_matrix(m) {this.gl.uniformMatrix4fv(this.uniform_location.camera_matrix, false, new Float32Array(m)) 
         const u = this.gl.getUniformLocation(this.program, 'uCameraPos')
         this.gl.uniform3f(u, m[12], m[13], m[14])
 
-        const u2 = this.gl.getUniformLocation(this.program, 'UViewMatrix')
+        const u2 = this.gl.getUniformLocation(this.program, 'uViewMatrix')
         if(u2 != -1) {
             const vm = mat4.create()
             mat4.invert(vm, m)
@@ -132,8 +140,12 @@ export class Shader {
     set_clip_plane(x, y, z, w) { this.gl.uniform4f(this.uniform_location.clip_plane, x, y, z, w) }
 
     set_lightpos(v) {
-        const luniform = this.gl.getUniformLocation(this.program, 'uLightPos');
+        const luniform = this.gl.getUniformLocation(this.program, 'uLightPos')
         this.gl.uniform3f(luniform, v[0], v[1], v[2])
+    }
+    set_lightintensity(i) {
+        const uniform = this.gl.getUniformLocation(this.program, 'uLightIntensity')
+        this.gl.uniform1f(uniform, i)
     }
 
     set_lightcolors(a, d, s) {
@@ -146,10 +158,13 @@ export class Shader {
             this.gl.uniform4f(duniform, ...DIFFUSE_COLOR)
         if(s === null)
             this.gl.uniform4f(suniform, ...SPECULAR_COLOR)
+
+        if(d !== null) {
+            this.gl.uniform4f(duniform, ...d)
+        }
     }
 
-    add_texture(src, type) {
-        console.log(type)
+    add_texture(src, type, repeat=0) {
         if(type ===  MODEL_TEXTURE || type === NORMAL_MAP) {
           
             const texture = this.gl.createTexture()
@@ -161,18 +176,16 @@ export class Shader {
                 this.gl.bindTexture(this.gl.TEXTURE_2D, texture)
                 this.gl.texImage2D(this.gl.TEXTURE_2D, 0, this.gl.RGBA, this.gl.RGBA, this.gl.UNSIGNED_BYTE, image)
                 let gl = this.gl
+
                 if(is_power_of_two(image.width) && is_power_of_two(image.height)) {
                     gl.generateMipmap(gl.TEXTURE_2D)
                 } else {
                     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE)
                     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE)
-                    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR) 
-
+                    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR)
                 }
             }
             image.src = src 
-
-            console.log(type)
             if(type === MODEL_TEXTURE)
                 this.model_texture = texture 
             else this.normal_map = texture
@@ -236,15 +249,11 @@ export class Shader {
             const tuniform = this.gl.getUniformLocation(this.program, 'uTexture')
             this.gl.uniform1i(tuniform, 4)
         }
-        if(this.normal_map !== null && this.normal_map !== undefined) {
-            // //this.gl.activeTexture(this.gl.TEXTURE3)
-            // this.gl.bindTexture(this.gl.TEXTURE_2D, this.normal_map)
-            // const nuniform = this.gl.getUniformLocation(this.program, 'uNormalMap')
-
-            // if(nuniform != -1)
-            //     this.gl.uniform1i(nuniform, 3)
-
-            // this.gl.bindTexture(this.gl.TEXTURE_2D, null)
+        if(this.normal_map !== null) {
+            this.gl.activeTexture(this.gl.TEXTURE5)
+            this.gl.bindTexture(this.gl.TEXTURE_2D, this.normal_map)
+            const uniform = this.gl.getUniformLocation(this.program, 'uNormalMap')
+            this.gl.uniform1i(uniform, 5)
         }
         this.gl.drawElements(this.gl.TRIANGLES, model.mesh.index_count, this.gl.UNSIGNED_SHORT, 0)
     }
@@ -280,17 +289,8 @@ export class Shader {
             this.gl.activeTexture(this.gl.TEXTURE0)
             this.gl.bindTexture(this.gl.TEXTURE_2D, this.ocean_reflection_texture)
         }
-        // Refraction is not needed at this point
-        // if(this.ocean_refraction_texture !== null && this.ocean_refraction_texture !== undefined) {
-        //     const uniform = this.gl.getUniformLocation(this.program, 'uRefractionTexture')
-        //     console.log(uniform)
-        //     this.gl.uniform1i(uniform, 0)
-        //     this.gl.activeTexture(this.gl.TEXTURE0)
-        //     this.gl.bindTexture(this.gl.TEXTURE_2D, this.ocean_reflection_texture)
-        // }
         if(this.ocean_dudv_texture !== null && this.ocean_dudv_texture !== undefined) {
             const duniform = this.gl.getUniformLocation(this.program, 'uDuDv')
-            console.log(duniform)
             this.gl.uniform1i(duniform, 2)
             this.gl.activeTexture(this.gl.TEXTURE2)
             this.gl.bindTexture(this.gl.TEXTURE_2D, this.ocean_dudv_texture)

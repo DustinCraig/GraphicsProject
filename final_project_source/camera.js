@@ -21,7 +21,7 @@ export class Camera {
         this.yaw = 0
         this.pitch_rate = 0
         this.yaw_rate = 0
-        this.speed = 0.1
+        this.speed = 0.3
         this.xpos = 0
         this.ypos = 0
         this.zpos = 0 

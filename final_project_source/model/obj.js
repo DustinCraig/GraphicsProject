@@ -86,8 +86,6 @@ export function load_mesh(txt) {
 
     let raw_verts =   []
     let raw_tex   =   []
-
-    /* Cant be used for the purposes of this lab */
     let raw_indices = []
     let final_verts = []
     let indices     = []

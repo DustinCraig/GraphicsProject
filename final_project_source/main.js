@@ -5,6 +5,7 @@ import {load_mesh, LoadFile} from './model/obj.js'
 import {gl_instance} from './gl.js'
 import { Shader } from './shader.js'
 import {OceanFrameBuffers} from './ocean.js'
+
 /* Logger for main program */
 const logger = new Logger("Main")
 
@@ -16,92 +17,15 @@ let pier = null
 let skybox = null 
 let ocean = null 
 let boat = null 
+let grass = null 
+let dirt = null 
+let cabin = null 
+let candle = null 
+let table = null 
 
 /* Global camera */
 let camera = null 
 
-
-const pier_vertex_shader =`
-attribute vec4 a_pos;
-attribute vec3 a_norm;
-attribute vec2 a_uv;
-
-uniform mat4 uPMatrix;
-uniform mat4 uMVMatrix;
-uniform mat4 uCameraMatrix;
-uniform vec3 uLightPos;
-uniform vec4 uAmbientColor;
-uniform vec4 uDiffuseColor;
-uniform vec4 uSpecularColor;
-uniform vec3 uCameraPos;
-uniform vec4 uClipPlane;
-
-varying highp vec2 vUV;
-varying vec4 color;
-varying vec3 vertPos;
-varying float fogDepth;
-varying float clip_distance; 
-
-vec3 lnormal;
-
-void main(void) {
-
-    vec4 ambient_color = uAmbientColor;
-    vec4 diffuse_color = uDiffuseColor;
-    vec4 specular_color = uSpecularColor;
-    float shine_val = 89.8; 
-    clip_distance = dot(uMVMatrix * a_pos, uClipPlane);
-    vUV = a_uv;
-    vec4 p = uPMatrix * uCameraMatrix * uMVMatrix * a_pos;
-    vertPos = ((uCameraMatrix * uMVMatrix) * a_pos).xyz;//p.xyz; //(uCameraMatrix * a_pos).xyz;
-    fogDepth = distance(p, vec4(uCameraPos, 1.0)); 
-    gl_Position = p;
-    p = uMVMatrix * a_pos;
-
-    lnormal = mat3(uMVMatrix) * a_norm;
-
-    vec3 N = normalize(lnormal);
-    vec3 L = normalize(uLightPos - vertPos);
-
-    float lamb = max(dot(N, L), 0.0);
-    float spec = 0.0;
-    if(lamb > 0.0) {
-        vertPos = vec3(p) / p.w;
-        L = normalize(uLightPos - vertPos);
-        N = a_norm;//normalize(vec3(uMVMatrix * vec4(a_norm, 0.0)));
-
-        vec3 R = reflect(-L, N);
-        vec3 V = normalize(-vec3(p));
-
-        float spec_angle = max(dot(R, V), 0.0);
-        spec = pow(spec_angle, shine_val);
-
-    }
-    color = vec4(vec3(ambient_color + lamb*diffuse_color + spec*specular_color), 1.0);
-}
-`
-
-const pier_fragment_shader = `
-
-precision mediump float;
-uniform sampler2D uTexture;
-varying highp vec2 vUV;
-varying vec4 color; 
-varying vec3 vertPos;
-varying float fogDepth;
-varying float clip_distance; 
-
-void main(void) {
-    float density = 0.01;
-    float LOG2 = 1.442695;
-    float z = gl_FragCoord.z / gl_FragCoord.w;
-    float fogFactor = exp2(-density*density*z*z*LOG2);
-    fogFactor = clamp(fogFactor, 0.0, 1.0);
-    vec4 frag_color = texture2D(uTexture, vUV) * color;
-    vec4 fog_color = vec4(0.8,0.9,1,1);
-    gl_FragColor = mix(fog_color, frag_color, fogFactor);
-}
-`
 
 const skybox_vertex_shader =`
 attribute vec4 a_pos;
@@ -113,8 +37,6 @@ uniform mat4 uInversePMatrix;
 uniform mat4 uMVMatrix;
 uniform mat4 uInverseMVMatrix;
 uniform mat4 uCameraMatrix;
-uniform vec4 uClipPlane;
-
 
 varying vec3 eyeDirection;
 
@@ -133,10 +55,10 @@ precision mediump float;
 
 varying vec3 eyeDirection;
 uniform samplerCube uSkybox;
+uniform vec4 uAmbientColor;
 
 void main() {
-
-    gl_FragColor = textureCube(uSkybox, eyeDirection);
+    gl_FragColor = textureCube(uSkybox, eyeDirection) * uAmbientColor;
 }
 `
 
@@ -147,20 +69,24 @@ attribute vec2 a_uv;
 
 varying vec2 uv; 
 varying vec4 clip_space; 
+varying vec3 vnorm;
+varying vec3 vpos;
 varying float clip_distance;
 
 uniform mat4 uPMatrix;
 uniform mat4 uMVMatrix;
 uniform mat4 uCameraMatrix;
 uniform mat4 uViewMatrix;
+uniform mat3 uMVITMatrix;
 uniform vec4 uClipPlane;
 
 void main(void) {
+    vnorm = uMVITMatrix * a_norm; 
     float tiling = 36.0;
     uv = vec2(a_uv.x/2.0, a_uv.y/2.0 + 0.5) * tiling; 
-    clip_distance = dot(uMVMatrix * a_pos, uClipPlane);
     clip_space = uPMatrix * uCameraMatrix * uMVMatrix * vec4(a_pos.x, 0.0, a_pos.y, 1.0);
     gl_Position =  clip_space;
+    vpos = (uMVMatrix * vec4(a_pos.x, 0.0, a_pos.y, 1.0)).xyz;
 }
 `
 
@@ -169,10 +95,12 @@ precision mediump float;
 
 varying vec2 uv;
 varying vec4 clip_space;
-varying float clip_distance;
+varying vec3 vnorm;
+varying vec3 vpos;
 
 uniform sampler2D uReflectionTexture;
-uniform sampler2D uRefractionTexture; 
+uniform vec4 uAmbientColor;
+uniform vec3 uLightPos;
 uniform sampler2D uDuDv;
 
 uniform float uWaveFactor;
@@ -191,14 +119,26 @@ void main(void) {
     reflect_tex_coords.x = clamp(reflect_tex_coords.x, 0.001, 0.999);
     reflect_tex_coords.y = clamp(reflect_tex_coords.y, -0.999, 0.001);
     vec4 reflection_color = texture2D(uReflectionTexture, reflect_tex_coords); 
-    vec4 refraction_color = texture2D(uRefractionTexture, refract_tex_coords); 
 
     gl_FragColor = reflection_color;
     gl_FragColor = mix(gl_FragColor, vec4(0.0, 0.3, 0.5, 1.0), 0.4);
+
+
+    vec3 normal = normalize(vnorm);
+    vec3 surfaceToLight = uLightPos - vpos;
+
+    float density = 0.02;
+    float LOG2 = 1.442695;
+    float z = gl_FragCoord.z / gl_FragCoord.w;
+    float fogFactor = exp2(-density*density*z*z*LOG2);
+    fogFactor = clamp(fogFactor, 0.0, 1.0);
+    vec4 fog_color = vec4(0.8,0.9,1,1);
+    
+    gl_FragColor = mix(fog_color, gl_FragColor, fogFactor) * uAmbientColor;
 }
 `
 
-const boat_vertex_shader = `
+const grass_vertex_shader = `
 attribute vec4 a_pos;
 attribute vec3 a_norm;
 attribute vec2 a_uv;
@@ -206,84 +146,234 @@ attribute vec2 a_uv;
 uniform mat4 uPMatrix;
 uniform mat4 uMVMatrix;
 uniform mat4 uCameraMatrix;
-uniform vec4 uClipPlane;
 uniform vec3 uCameraPos;
-varying vec3 normInterp;
-varying vec3 specNormal;
-varying vec3 vertPos;
-varying vec3 svertPos;
-varying float fogDepth; 
+uniform vec4 uClipPlane;
+
 varying vec2 vUV;
-varying float clip_distance;
 
 void main() {
-    clip_distance = dot(uPMatrix * uCameraMatrix * uMVMatrix * a_pos, uClipPlane);
     vUV = a_uv;
     vec4 p = uPMatrix * uCameraMatrix * uMVMatrix * a_pos;
     gl_Position = p;
-    fogDepth = distance(p, vec4(uCameraPos, 1.0)); 
-    vertPos = vec3(p) / p.w;
-    
-    vec4 p2 = uCameraMatrix * uMVMatrix * a_pos;
-    svertPos = vec3(p2) / p2.w;
 
-    normInterp = vec3(uMVMatrix * vec4(a_norm, 0.0));
 }
 `
 
-const boat_fragment_shader = `
+const grass_fragment_shader = `
 precision mediump float;
 
-varying vec3 normInterp;
-varying vec3 vertPos;
-varying vec3 svertPos;
-varying float clip_distance;
+varying vec2 vUV; 
+uniform sampler2D uTexture;
+uniform vec3 uLightPos;
+uniform vec4 uAmbientColor;
+uniform vec4 uDiffuseColor;
+uniform vec4 uSpecularColor;
+
+void main() {
+    float density = 0.02;
+    float LOG2 = 1.442695;
+    float z = gl_FragCoord.z / gl_FragCoord.w;
+    float fogFactor = exp2(-density*density*z*z*LOG2);
+    fogFactor = clamp(fogFactor, 0.0, 1.0);
+    vec4 fog_color = vec4(0.8,0.9,1,1);
+    vec4 frag_color = texture2D(uTexture, vUV);
+    
+    gl_FragColor = mix(fog_color, frag_color, fogFactor) * uAmbientColor;
+}
+`
+
+const dirt_vertex_shader = `
+attribute vec4 a_pos;
+attribute vec3 a_norm;
+attribute vec2 a_uv;
+
+uniform mat4 uPMatrix;
+uniform mat4 uMVMatrix;
+uniform mat4 uCameraMatrix;
+uniform vec3 uCameraPos;
+uniform vec4 uClipPlane;
+
+varying vec2 vUV;
+
+void main() {
+    vUV = a_uv;
+    gl_Position = uPMatrix * uCameraMatrix * uMVMatrix * a_pos;
+}
+`
+
+const dirt_fragment_shader = `
+precision mediump float;
+
+varying vec2 vUV; 
+uniform sampler2D uTexture;
+uniform vec3 uLightPos;
+uniform vec4 uAmbientColor;
+uniform vec4 uDiffuseColor;
+uniform vec4 uSpecularColor;
+
+void main() {
+    float density = 0.02;
+    float LOG2 = 1.442695;
+    float z = gl_FragCoord.z / gl_FragCoord.w;
+    float fogFactor = exp2(-density*density*z*z*LOG2);
+    fogFactor = clamp(fogFactor, 0.0, 1.0);
+    vec4 fog_color = vec4(0.8,0.9,1,1);
+    vec4 frag_color = texture2D(uTexture, vUV);
+    gl_FragColor = mix(fog_color, frag_color, fogFactor) * uAmbientColor;
+}
+`
+
+const object_vertex_shader = `
+attribute vec4 a_pos;
+attribute vec3 a_norm;
+attribute vec2 a_uv;
+
+uniform mat4 uPMatrix;
+uniform mat4 uMVMatrix;
+uniform mat3 uMVITMatrix;
+uniform mat4 uCameraMatrix;
+uniform vec3 uCameraPos;
+uniform vec4 uClipPlane;
+uniform float uLightIntensity;
+
+
+varying vec2 vUV;
+varying vec3 vpos;
+varying vec3 vnorm; 
+varying float intensity;
+varying vec3 vSurfaceToLight;
+
+void main() {
+    intensity = uLightIntensity;
+    vnorm = normalize(uMVITMatrix * a_norm); 
+    vUV = a_uv;
+    vec4 p = uPMatrix * uCameraMatrix * uMVMatrix * a_pos;
+    gl_Position = p;
+    vpos = (uMVMatrix * a_pos).xyz;
+}
+`
+
+const object_fragment_shader = `
+precision mediump float;
+
+varying vec2 vUV; 
+varying vec3 vpos;
+varying vec3 vnorm; 
+varying float intensity;
+varying vec3 vSurfaceToLight;
+uniform sampler2D uTexture;
+uniform sampler2D uNormalMap;
 
 uniform vec4 uAmbientColor;
 uniform vec4 uDiffuseColor;
 uniform vec4 uSpecularColor;
 uniform vec3 uLightPos;
-uniform sampler2D uTexture;
-uniform sampler2D uNormalMap;
-varying highp vec2 vUV;
-
-float shine_val = 106.8;
 
 void main() {
-    vec3 N = normalize(normInterp);
-    vec3 L = normalize(uLightPos - vertPos);
+    vec3 normal = normalize(vnorm);
+    vec3 surfaceToLight = uLightPos - vpos;
 
-    float lamb = max(dot(N, L), 0.0);
-    float spec = 0.0;
-
-    if(lamb > 0.0) {
-        L = normalize(uLightPos - svertPos);
-        
-        vec3 R = reflect(-L, N);
-        vec3 V = normalize(-svertPos);
-
-        float sangle = max(dot(R, V), 0.0);
-        spec = pow(sangle, shine_val);
-    }
-
-    vec4 color = vec4(vec3(uAmbientColor + lamb*uDiffuseColor + spec*uSpecularColor), 1.0);
+    float d = length(surfaceToLight);
+    float attenuation = clamp(10.0 / d, 0.0, 1.0);
+    float light = dot(normal, surfaceToLight) / (length(surfaceToLight) * length(normal));
+    light = clamp(light, 0.0, 1.0);
 
     float density = 0.01;
     float LOG2 = 1.442695;
     float z = gl_FragCoord.z / gl_FragCoord.w;
     float fogFactor = exp2(-density*density*z*z*LOG2);
     fogFactor = clamp(fogFactor, 0.0, 1.0);
-    vec4 frag_color = texture2D(uTexture, vUV) * color;
-    vec4 fog_color = vec4(0.8,0.9,1,1);
-    gl_FragColor = mix(fog_color, frag_color, fogFactor);
+    vec4 fog_color = vec4(0.8,0.9,1,1)*uAmbientColor;
+    vec4 frag_color = texture2D(uTexture, vUV);
+    gl_FragColor =  vec4(vec3(uAmbientColor*texture2D(uTexture, vUV) + texture2D(uTexture, vUV)*light*uDiffuseColor*attenuation*intensity), 1.0);
+    gl_FragColor = mix(fog_color, gl_FragColor, fogFactor);    
 }
 `
 
+const object_vertex_shader_nm = `
+attribute vec4 a_pos;
+attribute vec3 a_norm;
+attribute vec2 a_uv;
+
+uniform mat4 uPMatrix;
+uniform mat4 uMVMatrix;
+uniform mat3 uMVITMatrix;
+uniform mat4 uCameraMatrix;
+uniform vec3 uCameraPos;
+uniform vec4 uClipPlane;
+uniform float uLightIntensity;
+
+
+varying vec2 vUV;
+varying vec3 vpos;
+varying vec3 vnorm; 
+varying float intensity;
+varying vec3 vSurfaceToLight;
+
+void main() {
+    intensity = uLightIntensity;
+    vnorm = normalize(uMVITMatrix * a_norm); 
+    vUV = a_uv;
+    vec4 p = uPMatrix * uCameraMatrix * uMVMatrix * a_pos;
+    gl_Position = p;
+    vpos = (uMVMatrix * a_pos).xyz;
+}
+`
+
+const object_fragment_shader_nm = `
+precision mediump float;
+
+varying vec2 vUV; 
+varying vec3 vpos;
+varying vec3 vnorm; 
+varying float intensity;
+varying vec3 vSurfaceToLight;
+uniform sampler2D uTexture;
+uniform sampler2D uNormalMap;
+
+uniform vec4 uAmbientColor;
+uniform vec4 uDiffuseColor;
+uniform vec4 uSpecularColor;
+uniform vec3 uLightPos;
+
+void main() {
+    vec3 normal = texture2D(uNormalMap, vUV).rbg;
+    normal = normalize(normal * 2.0 - 1.0);
+    vec3 surfaceToLight = uLightPos - vpos;
+
+    float d = length(surfaceToLight);
+    float attenuation = clamp(10.0 / d, 0.0, 1.0);
+    float light = dot(normal, surfaceToLight) / (length(surfaceToLight) * length(normal));
+    light = clamp(light, 0.0, 1.0);
+
+    float density = 0.01;
+    float LOG2 = 1.442695;
+    float z = gl_FragCoord.z / gl_FragCoord.w;
+    float fogFactor = exp2(-density*density*z*z*LOG2);
+    fogFactor = clamp(fogFactor, 0.0, 1.0);
+    vec4 fog_color = vec4(0.8,0.9,1,1)*uAmbientColor;
+    vec4 frag_color = texture2D(uTexture, vUV);
+    gl_FragColor =  vec4(vec3(uAmbientColor*texture2D(uTexture, vUV) + texture2D(uTexture, vUV)*light*uDiffuseColor*attenuation*intensity), 1.0);
+    gl_FragColor = mix(fog_color, gl_FragColor, fogFactor);    
+}
+`
+
+
+/* Shader declarations */
 let pier_shader = null 
 let sky_shader = null 
 let ocean_shader = null 
 let ocean_fb = null 
 let boat_shader = null 
+let grass_shader = null
+let dirt_shader = null 
+let cabin_shader = null 
+let candle_shader = null 
+let table_shader = null
+
+/* Light intensities */
+let cabin_intensity = 0
+let boat_intensity = 0
 
 async function main() {
 
@@ -304,89 +394,214 @@ async function main() {
     gl = gl_instance('gl_canvas')
     gl.fclear()
 
-    pier_shader = new Shader(gl, pier_vertex_shader, pier_fragment_shader)
-    pier_shader.add_texture('http://web.eecs.utk.edu/~dcraig14/2bN9gJ0sx3U/final_project_source/model/Wood_01.jpg', 0)
+    /* Pier */
+    let pier_file = await LoadFile('http://web.eecs.utk.edu/~dcraig14/2bN9gJ0sx3U/final_project_source/model/pier/model.obj')
+    pier = new Model(gl, 'pier', load_mesh(pier_file))
+    pier_shader = new Shader(gl, object_vertex_shader, object_fragment_shader)
+    pier_shader.add_texture('http://web.eecs.utk.edu/~dcraig14/2bN9gJ0sx3U/final_project_source/model/pier/texture.jpg', 0)
 
+    /* Skybox */
+    skybox = new Model(gl, 'skybox')
     sky_shader = new Shader(gl, skybox_vertex_shader, skybox_fragment_shader)
     sky_shader.add_texture(null, 1)
 
+    /* Boat */
+    let boat_file = await LoadFile('http://web.eecs.utk.edu/~dcraig14/2bN9gJ0sx3U/final_project_source/model/boat/model.obj')
+    boat = new Model(gl, 'boat', load_mesh(boat_file))
+    boat_shader = new Shader(gl, object_vertex_shader_nm, object_fragment_shader_nm)
+    boat_shader.add_texture('http://web.eecs.utk.edu/~dcraig14/2bN9gJ0sx3U/final_project_source/model/boat/texture.jpg', 0)
+    boat_shader.add_texture('http://web.eecs.utk.edu/~dcraig14/2bN9gJ0sx3U/final_project_source/model/boat/normal_map.jpg', 2)
+
+    /* Cabin */
+    let cabin_file = await LoadFile('http://web.eecs.utk.edu/~dcraig14/2bN9gJ0sx3U/final_project_source/model/cabin/model.obj')
+    cabin = new Model(gl, 'cabin', load_mesh(cabin_file))
+    cabin_shader = new Shader(gl, object_vertex_shader_nm, object_fragment_shader_nm)
+    cabin_shader.add_texture('http://web.eecs.utk.edu/~dcraig14/2bN9gJ0sx3U/final_project_source/model/cabin/texture.jpg', 0)
+    cabin_shader.add_texture('http://web.eecs.utk.edu/~dcraig14/2bN9gJ0sx3U/final_project_source/model/cabin/normal_map.jpg', 2)
+
+    /* Dirt */
+    let cube_file = await LoadFile('http://web.eecs.utk.edu/~dcraig14/2bN9gJ0sx3U/final_project_source/model/cube.obj')
+    dirt = new Model(gl, 'dirt', load_mesh(cube_file))
+    dirt_shader = new Shader(gl, dirt_vertex_shader, dirt_fragment_shader) 
+    dirt_shader.add_texture('http://web.eecs.utk.edu/~dcraig14/2bN9gJ0sx3U/final_project_source/model/dirt.jpg', 0, 1)
+
+    let quad_file = await LoadFile('http://web.eecs.utk.edu/~dcraig14/2bN9gJ0sx3U/final_project_source/model/quad.obj')
+    /* Grass */
+    grass = new Model(gl, 'grass', load_mesh(quad_file))
+    grass_shader = new Shader(gl, grass_vertex_shader, grass_fragment_shader)
+    grass_shader.add_texture('http://web.eecs.utk.edu/~dcraig14/2bN9gJ0sx3U/final_project_source/model/grass.jpg', 0)
+
+    /* Candle */
+    let candle_file = await LoadFile('http://web.eecs.utk.edu/~dcraig14/2bN9gJ0sx3U/final_project_source/model/candle/model.obj')
+    candle = new Model(gl, 'candle', load_mesh(candle_file))
+    candle_shader = new Shader(gl, object_vertex_shader, object_fragment_shader)
+    candle_shader.add_texture('http://web.eecs.utk.edu/~dcraig14/2bN9gJ0sx3U/final_project_source/model/candle/texture.jpg', 0)
+
+    /* Table */
+    let table_file = await LoadFile('http://web.eecs.utk.edu/~dcraig14/2bN9gJ0sx3U/final_project_source/model/desk/model.obj')
+    table = new Model(gl, 'table', load_mesh(table_file))
+    table_shader = new Shader(gl, object_vertex_shader, object_fragment_shader)
+    table_shader.add_texture('http://web.eecs.utk.edu/~dcraig14/2bN9gJ0sx3U/final_project_source/model/desk/texture.png', 0)
+
+    /* Ocean */
+    ocean = new Model(gl, 'ocean2', load_mesh(quad_file))
+    ocean_fb = new OceanFrameBuffers(gl)
     ocean_shader = new Shader(gl, ocean_vertex_shader, ocean_fragment_shader)
 
     camera = new Camera(gl, null, null, null, canvas)
-    camera.transform.position = [0, 28, -4]
+    camera.transform.position = [0, 33, -4]
     camera.update_viewmatrix()
-    
-    let pier_file = await LoadFile('http://web.eecs.utk.edu/~dcraig14/2bN9gJ0sx3U/final_project_source/model/WoodenBridge_01.obj')
-    pier = new Model(gl, 'pier', load_mesh(pier_file))
-
-    let boat_file = await LoadFile('http://web.eecs.utk.edu/~dcraig14/2bN9gJ0sx3U/final_project_source/model/OldBoat.obj')
-    boat_shader = new Shader(gl, boat_vertex_shader, boat_fragment_shader)
-    boat_shader.add_texture('http://web.eecs.utk.edu/~dcraig14/2bN9gJ0sx3U/final_project_source/model/boattex.jpg', 0)
-    boat_shader.add_texture('http://web.eecs.utk.edu/~dcraig14/2bN9gJ0sx3U/final_project_source/model/boattexnm.jpg', 2)
-    boat = new Model(gl, 'boat', load_mesh(boat_file))
-
-    skybox = new Model(gl, 'skybox')
-
-    let quad_file = await LoadFile('http://web.eecs.utk.edu/~dcraig14/2bN9gJ0sx3U/final_project_source/model/quad.obj')
-    ocean = new Model(gl, 'ocean2', load_mesh(quad_file))
-    ocean_fb = new OceanFrameBuffers(gl)
 
     let old_dt = 0 
     function render(now) {
         now *= 0.001
         const dt = now - old_dt
         old_dt = dt 
-        display(gl)
+        display(gl, dt)
         requestAnimationFrame(render)
     }
     requestAnimationFrame(render)
     
 }
 
-function render_scene(gl, cp) {
+let f = 0 
+function render_scene(gl, dt) {
     gl.fclear()
 
+    f += Math.random() * 0.1
+
+    /* Calculate light intensities */
+    cabin_intensity = Math.sin(f)
+    cabin_intensity *= cabin_intensity
+    cabin_intensity = (cabin_intensity + 2) / 2
+    boat_intensity = Math.sin(f)
+    boat_intensity *= boat_intensity
+    boat_intensity = (boat_intensity + 2) / 2
+    
     /* Render the pier */
     pier_shader.activate()
     pier_shader.set_perspective_matrix(camera.perspective_matrix)
     pier_shader.set_camera_matrix(camera.modelview_matrix)
-    pier_shader.set_clip_plane(...cp)
     pier_shader.set_lightpos([0, 10, 0])
     pier.transform.position = [0, 2, 0]
     pier.transform.scale = [.3, .3, .3]
     pier.pre_render()
-    pier_shader.set_clip_plane(...cp)
-    pier_shader.set_lightcolors(null, null, null)
+    pier_shader.set_lightcolors(null, [1.0, 1.0, 0.6, 1.0], null)
+    pier_shader.set_lightpos([10, 18, 41])
     pier_shader.render_model(pier)
 
     /* Render boat */
     boat_shader.activate()
     boat_shader.set_perspective_matrix(camera.perspective_matrix)
     boat_shader.set_camera_matrix(camera.modelview_matrix)
-    boat_shader.set_lightpos([10, 17, 0])
-    boat.transform.position = [10, 13, 50]
+    boat_shader.set_lightpos([14, 16, 41])
+    boat_shader.set_lightintensity(boat_intensity)
+    boat.transform.position = [5, 13, 50]
     boat.transform.rotation = [0, 90, 0]
     boat.transform.scale = [1, 1, 1]
     boat.pre_render()
-    boat_shader.set_clip_plane(...cp)
     boat_shader.set_lightcolors(null, null, null)
     boat_shader.render_model(boat)
+    boat_shader.set_lightpos([14, 20, 41])
+    boat_shader.render_model(boat)
+
+    /* Render Cabin */
+    cabin_shader.activate()
+    cabin_shader.set_perspective_matrix(camera.perspective_matrix)
+    cabin_shader.set_camera_matrix(camera.modelview_matrix)
+    cabin.transform.position = [126, 21, 0]
+    cabin.transform.rotation = [0, -90, 0]
+    cabin.transform.scale = [0.7, 0.7, 0.7]
+    cabin_shader.set_lightcolors(null, null, null)
+    cabin_shader.set_lightpos([132, 40, -12])
+    cabin_shader.set_lightintensity(cabin_intensity)
+    cabin.pre_render()
+    cabin_shader.render_model(cabin)
+
+    /* Render candle */
+    candle_shader.activate()
+    candle_shader.set_perspective_matrix(camera.perspective_matrix)
+    candle_shader.set_camera_matrix(camera.modelview_matrix)
+
+    /* Boat candle */
+    candle.transform.position = [9, 17.5, 44]
+    candle.transform.scale = [0.1, 0.1, 0.1]
+    candle_shader.set_lightcolors(null, null, null)
+    candle_shader.set_lightpos([12,20, 44])
+    candle_shader.set_lightintensity(boat_intensity)
+    candle.pre_render()
+    candle_shader.render_model(candle)
+
+    /* Inside candle */
+    candle.transform.position = [132, 30.6, -12]
+    candle.transform.scale = [0.1, 0.1, 0.1]
+    candle_shader.set_lightcolors(null, null, null)
+    candle_shader.set_lightpos([132, 32, -12])
+    candle_shader.set_lightintensity(cabin_intensity)
+    candle.pre_render()
+    candle_shader.render_model(candle)
+
+    /* Render Table */
+    table_shader.activate()
+    table_shader.set_perspective_matrix(camera.perspective_matrix)
+    table_shader.set_camera_matrix(camera.modelview_matrix)
+    table.transform.position = [132, 25, -12]
+    table.transform.scale = [0.2, 0.2, 0.2]
+    table.transform.rotation = [0, 90, 0]
+    table_shader.set_lightcolors(null, null, null)
+    table_shader.set_lightpos([132, 32, -12])
+    table_shader.set_lightintensity(cabin_intensity)
+    table.pre_render()
+    table_shader.render_model(table)
+
+    /* Render Grass */
+    grass_shader.activate()
+    grass_shader.set_perspective_matrix(camera.perspective_matrix)
+    grass_shader.set_camera_matrix(camera.modelview_matrix)
+    grass.transform.rotation = [90, 0, 0]
+    grass.transform.scale = [48, 50, 1]
+    grass.transform.position = [125, 23, 0]
+    grass_shader.set_lightcolors(null, null, null)
+    grass.pre_render()
+    grass_shader.render_model(grass)
+
+    /* Render Dirt */
+    dirt_shader.activate()
+    dirt_shader.set_perspective_matrix(camera.perspective_matrix)
+    dirt_shader.set_camera_matrix(camera.modelview_matrix)
+    dirt_shader.set_lightcolors(null, null, null)
+    dirt.transform.position = [101, 13, 26]
+    dirt.transform.scale = [50, 19,50]
+    dirt.pre_render()
+    dirt_shader.render_model(dirt)
+
+    dirt.transform.position = [151, 13, 26]
+    dirt.transform.scale = [50, 19,50]
+    dirt.pre_render()
+    dirt_shader.render_model(dirt)
+
+    dirt.transform.position = [101, 13, -26]
+    dirt.transform.scale = [50, 19,53]
+    dirt.pre_render()
+    dirt_shader.render_model(dirt)
+
+    dirt.transform.position = [151, 13, -26]
+    dirt.transform.scale = [50, 19,53]
+    dirt.pre_render()
+    dirt_shader.render_model(dirt)
 
     /* Set up skybox */
     sky_shader.activate()
     sky_shader.set_perspective_matrix(camera.perspective_matrix)
     sky_shader.set_camera_matrix(camera.modelview_matrix)
-    sky_shader.set_clip_plane(...cp)
+    sky_shader.set_lightcolors(null, null, null)
     sky_shader.render_skybox(skybox, camera)
-
-    
 }
 
-let cp = [0,13,0,0]
 let WAVE_FACTOR = 0
 let WAVE_SPEED = 0.0003
 
-function display(gl) {
+function display(gl, dt) {
     
     camera.update_viewmatrix()
     WAVE_FACTOR += WAVE_SPEED
@@ -398,7 +613,7 @@ function display(gl) {
     camera.pitch = -camera.pitch 
     camera.transform.position[1] -= distance 
     camera.update_viewmatrix()
-    render_scene(gl, cp) 
+    render_scene(gl, dt) 
     ocean_fb.unbind_current_framebuffer()
 
     /* Fix camera */
@@ -406,25 +621,20 @@ function display(gl) {
     camera.pitch = -camera.pitch 
     camera.update_viewmatrix()
 
-    /* Refraction pass */
-    // ocean_fb.bind_refraction_framebuffer()
-    // render_scene(gl, cp)
-    // ocean_fb.unbind_current_framebuffer()
-
     /* Render whole scene */
-    render_scene(gl, cp) 
+    render_scene(gl, dt) 
 
     /* Render ocean */
     ocean_shader.activate()
     ocean_shader.set_perspective_matrix(camera.perspective_matrix)
     ocean_shader.set_camera_matrix(camera.modelview_matrix)
-    ocean_shader.set_clip_plane(...cp)
     ocean.transform.position = [0, 13, 0]
     ocean.transform.rotation = [0, 0, 0]
     ocean.transform.scale = [190, 1, 190]
+    ocean_shader.set_lightcolors(null, null, null)
+    ocean_shader.set_lightpos([[15,18, 50]])
     ocean.pre_render()
     ocean_shader.ocean_reflection_texture = ocean_fb.reflection_texture 
-    ocean_shader.ocean_refraction_texture = ocean_fb.refraction_texture
     ocean_shader.ocean_dudv_texture = ocean_fb.ocean_dudv_texture
     ocean_shader.render_ocean(ocean, WAVE_FACTOR)
 
