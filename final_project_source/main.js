@@ -483,6 +483,7 @@ function render_scene(gl, dt) {
     pier_shader.set_perspective_matrix(camera.perspective_matrix)
     pier_shader.set_camera_matrix(camera.modelview_matrix)
     pier_shader.set_lightpos([0, 10, 0])
+    pier_shader.set_lightintensity(boat_intensity)
     pier.transform.position = [0, 2, 0]
     pier.transform.scale = [.3, .3, .3]
     pier.pre_render()
